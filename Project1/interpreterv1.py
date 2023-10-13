@@ -24,7 +24,7 @@ class Interpreter(InterpreterBase):
         
         # If function call
         elif (node.elem_type == self.FCALL_DEF):
-            return 
+            return self.do_func_call(node)
         # If addition or subtraction
         elif (node.elem_type in ["+", "-"]):
             left = self.evaluate_expression(node.get("op1"))
