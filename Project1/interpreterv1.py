@@ -61,8 +61,14 @@ class Interpreter(InterpreterBase):
             elif (len(params) == 0):
                 super().output(params[0])
             return int(super().get_input())
-        if (stat.get("name") == "print"):
+        elif (stat.get("name") == "print"):
             self.printValues(params)
+        else:
+            super().error(
+                ErrorType.NAME_ERROR,
+                f"No function found with that name",
+            )
+        
 
     def get_main_func_node(self, ast):
         main = [func for func in ast.get("functions") if func.get("name") == "main"]
