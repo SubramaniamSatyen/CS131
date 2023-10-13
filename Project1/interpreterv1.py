@@ -58,7 +58,7 @@ class Interpreter(InterpreterBase):
                     ErrorType.NAME_ERROR,
                     f"No inputi() function found that takes > 1 parameter",
                 )
-            elif (len(params) == 0):
+            elif (len(params) == 1):
                 super().output(params[0])
             return int(super().get_input())
         elif (stat.get("name") == "print"):
