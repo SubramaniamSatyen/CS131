@@ -115,7 +115,7 @@ class Interpreter(InterpreterBase):
         source_node = stat.get("expression")
         resulting_value = self.evaluate_expression(source_node)
 
-        for scope in self.variable_name_to_value:
+        for scope in reversed(self.variable_name_to_value):
             if target_var_name in scope:
                 scope[target_var_name] = resulting_value
                 return
