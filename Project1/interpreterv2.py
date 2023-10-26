@@ -127,7 +127,7 @@ class Interpreter(InterpreterBase):
         
         cond = self.evaluate_expression(stat.get('condition'))
         if (not isinstance(cond, bool)):
-            super().error(ErrorType.NAME_ERROR, f"Expected boolean input, got {cond}")
+            super().error(ErrorType.TYPE_ERROR, f"Expected boolean input, got {cond}")
 
         to_execute = "statements" if cond else "else_statements"
         for statement in stat.get(to_execute) or []:
