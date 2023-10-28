@@ -6,9 +6,9 @@ class Interpreter(InterpreterBase):
 
     def __init__(self, console_output=True, inp=None, trace_output=False):
         super().__init__(console_output, inp)   # call InterpreterBase's constructor
-        self.variable_name_to_value = [{}, {}]
+        self.variable_name_to_value = []
         self.function_name_to_node = {}
-        self.return_flg = False
+        self.return_flg = []
 
     def get_variable_value(self, var_name):
         for scope in reversed(self.variable_name_to_value):
@@ -17,17 +17,29 @@ class Interpreter(InterpreterBase):
             
         super().error(ErrorType.NAME_ERROR, f"Variable {var_name} has not been defined")
     
+    def dump_vars(self):
+        print("--------------------START:Variables--------------------")
+        for scope in (self.variable_name_to_value):
+            print(scope)
+        print("--------------------END:Variables--------------------")
+        print("--------------------START:ReturnStack--------------------")
+        print(self.return_flg)
+        print("--------------------END:ReturnStack--------------------")
+
+
     def do_arithmetic(self, node):
         left = self.evaluate_expression(node.get("op1"))
         right = self.evaluate_expression(node.get("op2"))
 
         if (node.elem_type == "+"):
-            if not ((isinstance(left, str) and isinstance(right, str)) or 
-                    (isinstance(left, int) and isinstance(right, int))):
+            if not (type(left) == type(right) and 
+                    type(left) in [str, int] and 
+                    type(right) in [str, int]):
                 super().error(ErrorType.TYPE_ERROR, "Incompatible types for arithmetic operation")
             return left + right
         else:
-            if not isinstance(left, int) or not isinstance(right, int):
+            if not (type(left) in [int] and
+                    type(right) in [int]):
                 super().error(ErrorType.TYPE_ERROR, "Incompatible types for arithmetic operation")
 
             if (node.elem_type == "-"):
@@ -41,8 +53,8 @@ class Interpreter(InterpreterBase):
         left = self.evaluate_expression(node.get("op1"))
         right = self.evaluate_expression(node.get("op2"))
 
-        if not isinstance(left, bool) or not isinstance(right, bool):
-                super().error(ErrorType.TYPE_ERROR, "Incompatible types for logical operation")
+        if not type(left) in [bool] or not type(right) in [bool]:
+            super().error(ErrorType.TYPE_ERROR, "Incompatible types for logical operation")
 
         if (node.elem_type == "||"):
             return left or right
@@ -52,11 +64,11 @@ class Interpreter(InterpreterBase):
     def do_unary(self, node):
         op = self.evaluate_expression(node.get("op1"))
         if (node.elem_type == self.NEG_DEF):
-            if (not isinstance(op, int)):
+            if (not type(op) in [int]):
                 super().error(ErrorType.TYPE_ERROR, "Expected integer type for negation operator")
             return -op
         elif (node.elem_type == "!"):
-            if (not isinstance(op, bool)):
+            if (not type(op) in [bool]):
                 super().error(ErrorType.TYPE_ERROR, "Expected bool type for not operator")
             return not op
         
@@ -64,11 +76,13 @@ class Interpreter(InterpreterBase):
         left = self.evaluate_expression(node.get("op1"))
         right = self.evaluate_expression(node.get("op2"))
         if (node.elem_type == "=="):
-            return left == right
+            return (left == right and 
+                    type(left) == type(right))
         elif (node.elem_type == "!="):
-            return left != right
+            return (left != right or
+                    type(left) != type(right))
         
-        if not isinstance(left, int) or not isinstance(right, int):
+        if not (type(left) in [int] and type(right) in [int]):
             super().error(ErrorType.TYPE_ERROR, f"Incompatible operator {node.elem_type} for types")
         
         if (node.elem_type == "<"):
@@ -81,6 +95,7 @@ class Interpreter(InterpreterBase):
             return left >= right
 
     def evaluate_expression(self, node):
+        # print(node)
         if (node is None or node.elem_type == self.NIL_DEF):
             return None
         # If a value, return value
@@ -122,23 +137,40 @@ class Interpreter(InterpreterBase):
         
         self.variable_name_to_value[-1][target_var_name] = resulting_value
 
+    def do_while(self, stat):
+        self.variable_name_to_value.append({})
+
+        while (True):
+            cond = self.evaluate_expression(stat.get('condition'))
+            if (not type(cond) in [bool]):
+                super().error(ErrorType.TYPE_ERROR, f"Expected boolean input, got {cond}")
+
+            if (not cond):
+                break
+    
+            for statement in stat.get("statements") or []:
+                ret = self.run_statement(statement)
+        
+                if (self.return_flg[-1]):
+                    self.variable_name_to_value.pop()
+                    return ret
+            
+        self.variable_name_to_value.pop()
+
     def do_conditional(self, stat):
         self.variable_name_to_value.append({})
         
         cond = self.evaluate_expression(stat.get('condition'))
-        if (not isinstance(cond, bool)):
+        if (not type(cond) in [bool]):
             super().error(ErrorType.TYPE_ERROR, f"Expected boolean input, got {cond}")
 
         to_execute = "statements" if cond else "else_statements"
         for statement in stat.get(to_execute) or []:
             ret = self.run_statement(statement)
         
-            if (self.return_flg):
+            if (self.return_flg[-1]):
                 self.variable_name_to_value.pop()
                 return ret
-        
-        if to_execute == "statements" and stat.elem_type == self.WHILE_DEF:
-            return self.do_conditional(stat)
 
         self.variable_name_to_value.pop()
 
@@ -151,7 +183,7 @@ class Interpreter(InterpreterBase):
 
     def printValues(self, params):
         vals = [self.evaluate_expression(p) for p in params]
-        super().output(''.join([str(val).lower() if isinstance(val, bool) else str(val) for val in vals]))
+        super().output(''.join([str(val).lower() if type(val) in [bool] else str(val) for val in vals]))
         return None
     
     def do_func_call(self, stat):
@@ -187,12 +219,13 @@ class Interpreter(InterpreterBase):
         elif stat.elem_type == self.IF_DEF:
             return self.do_conditional(stat)
         elif stat.elem_type == self.WHILE_DEF:
-            return self.do_conditional(stat)
+            return self.do_while(stat)
         elif stat.elem_type == self.RETURN_DEF:
-            self.return_flg = True
+            self.return_flg[-1] = True
             return copy.deepcopy(self.evaluate_expression(stat.get("expression")))
 
     def run_func(self, func, args):
+        # self.dump_vars()
         params = {}
 
         # Handle mismatched args
@@ -203,16 +236,17 @@ class Interpreter(InterpreterBase):
             params[param.get('name')] = self.evaluate_expression(val)
         self.variable_name_to_value.append(params)
 
-        self.return_flg = False
+        self.return_flg.append(False)
         ret = None
         for statement in func.get("statements"):
             ret = self.run_statement(statement)
         
-            if (self.return_flg):
+            if (self.return_flg[-1]):
                 break
         
         self.variable_name_to_value.pop()
-        self.return_flg = False
+        self.return_flg.pop()
+        # self.dump_vars()
         return ret        
 
     def run(self, program):
