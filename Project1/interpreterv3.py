@@ -223,7 +223,7 @@ class Interpreter(InterpreterBase):
                 return self.run_func(self.function_name_to_node[(possible_func.get("name"), len(possible_func.get("args")))][0], params)
             elif (possible_func.elem_type == self.LAMBDA_DEF and 
                   len(possible_func.get('args')) == len(params)):
-                return self.run_lambda_func(possible_func, params, possible_func_info[1])
+                return self.run_lambda_func(possible_func, params, possible_func_info[1], stat.get("name"))
 
         super().error(ErrorType.NAME_ERROR, f"No function found with name {stat.get('name')}")
     
@@ -252,13 +252,21 @@ class Interpreter(InterpreterBase):
             self.return_flg[-1] = True
             return copy.deepcopy(self.evaluate_expression(stat.get("expression")))
 
-    def run_lambda_func(self, func, args, scope):
+    def run_lambda_func(self, func, args, scope, var_name):
         vars_before = copy.deepcopy(self.variable_name_to_value)
         self.variable_name_to_value += scope
 
         ret = self.run_func(func, args)
         
+        # Updating lambda scope for future calls
+        lambda_scope = self.variable_name_to_value[len(vars_before):]
         self.variable_name_to_value = vars_before
+
+        for scope in reversed(self.variable_name_to_value):
+            if var_name in scope:
+                scope[var_name] = (scope[var_name][0], lambda_scope)
+                break
+
         return ret
 
     def run_func(self, func, args):
@@ -270,6 +278,7 @@ class Interpreter(InterpreterBase):
         if (len(func.get("args")) != len(args)):
             super().error(ErrorType.NAME_ERROR, f"Incorrect number of args for {func.get('name')}")
 
+        # Loading args
         for param, val in zip(func.get("args"), args):
             params[param.get('name')] = self.evaluate_expression(val)
         self.variable_name_to_value.append(params)
@@ -285,7 +294,16 @@ class Interpreter(InterpreterBase):
         if self.trace_output:
             self.dump_vars()
 
-        self.variable_name_to_value.pop()
+        # Handling ref params
+        curr_formal_params = self.variable_name_to_value.pop()
+        for formal_param, actual_param in zip(func.get("args"), args):
+            if (formal_param.elem_type == self.REFARG_DEF and actual_param.elem_type == self.VAR_DEF):
+                target_var_name = actual_param.get("name")
+                for scope in reversed(self.variable_name_to_value):
+                    if target_var_name in scope:
+                        scope[target_var_name] = curr_formal_params[formal_param.get('name')]
+                        break
+        
         self.return_flg.pop()
 
         return ret        
