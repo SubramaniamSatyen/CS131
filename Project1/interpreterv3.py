@@ -50,14 +50,12 @@ class Interpreter(InterpreterBase):
         right = self.evaluate_expression(node.get("op2"))
 
         if (node.elem_type == "+"):
-            if not (type(left) == type(right) and 
-                    type(left) in [str, int] and 
-                    type(right) in [str, int]):
+            if (not (type(left) == type(right) and type(left) in [str, int] and type(right) in [str, int]) and 
+                not (type(left) in [int, bool] and type(right) in [int, bool])):
                 super().error(ErrorType.TYPE_ERROR, "Incompatible types for arithmetic operation")
             return left + right
         else:
-            if not (type(left) in [int] and
-                    type(right) in [int]):
+            if not (type(left) in [int, bool] and type(right) in [int, bool ]):
                 super().error(ErrorType.TYPE_ERROR, "Incompatible types for arithmetic operation")
 
             if (node.elem_type == "-"):
@@ -71,7 +69,7 @@ class Interpreter(InterpreterBase):
         left = self.evaluate_expression(node.get("op1"))
         right = self.evaluate_expression(node.get("op2"))
 
-        if not type(left) in [bool] or not type(right) in [bool]:
+        if not type(left) in [bool, int] or not type(right) in [bool, int]:
             super().error(ErrorType.TYPE_ERROR, "Incompatible types for logical operation")
 
         if (node.elem_type == "||"):
@@ -86,19 +84,17 @@ class Interpreter(InterpreterBase):
                 super().error(ErrorType.TYPE_ERROR, "Expected integer type for negation operator")
             return -op
         elif (node.elem_type == "!"):
-            if (not type(op) in [bool]):
-                super().error(ErrorType.TYPE_ERROR, "Expected bool type for not operator")
+            if (not type(op) in [bool, int]):
+                super().error(ErrorType.TYPE_ERROR, "Expected bool/int type for not operator")
             return not op
         
     def do_comparison(self, node):
         left = self.evaluate_expression(node.get("op1"))
         right = self.evaluate_expression(node.get("op2"))
         if (node.elem_type == "=="):
-            return (left == right and 
-                    type(left) == type(right))
+            return (left == right)
         elif (node.elem_type == "!="):
-            return (left != right or
-                    type(left) != type(right))
+            return (left != right)
         
         if not (type(left) in [int] and type(right) in [int]):
             super().error(ErrorType.TYPE_ERROR, f"Incompatible operator {node.elem_type} for types")
@@ -162,8 +158,8 @@ class Interpreter(InterpreterBase):
 
         while (True):
             cond = self.evaluate_expression(stat.get('condition'))
-            if (not type(cond) in [bool]):
-                super().error(ErrorType.TYPE_ERROR, f"Expected boolean input, got {cond}")
+            if (not type(cond) in [bool, int]):
+                super().error(ErrorType.TYPE_ERROR, f"Expected boolean/integer input in while, got {cond}")
 
             if (not cond):
                 break
@@ -181,8 +177,8 @@ class Interpreter(InterpreterBase):
         self.variable_name_to_value.append({})
         
         cond = self.evaluate_expression(stat.get('condition'))
-        if (not type(cond) in [bool]):
-            super().error(ErrorType.TYPE_ERROR, f"Expected boolean input, got {cond}")
+        if (not type(cond) in [bool, int]):
+            super().error(ErrorType.TYPE_ERROR, f"Expected boolean/integer input in for, got {cond}")
 
         to_execute = "statements" if cond else "else_statements"
         for statement in stat.get(to_execute) or []:
