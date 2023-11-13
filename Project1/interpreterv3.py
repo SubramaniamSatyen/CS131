@@ -14,8 +14,11 @@ class Interpreter(InterpreterBase):
     def get_variable_value(self, var_name, args = None):
         for scope in reversed(self.variable_name_to_value):
             if var_name in scope:
-                if (args is not None and len(scope[var_name][0].get('args')) != args):
-                    super().error(ErrorType.TYPE_ERROR, f"Invalid number of args to function {var_name}")
+                if (args is not None):
+                    if type(scope[var_name]) not in [tuple]:
+                        super().error(ErrorType.TYPE_ERROR, f"Invalid call to undefined function {var_name}")
+                    elif len(scope[var_name][0].get('args')) != args:
+                        super().error(ErrorType.TYPE_ERROR, f"Invalid number of args to function {var_name}")
 
                 return scope[var_name]
             
