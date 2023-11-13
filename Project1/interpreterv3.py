@@ -228,8 +228,7 @@ class Interpreter(InterpreterBase):
     
     def load_functions(self, ast):
         for func in ast.get("functions"):
-            if func.get("name") != "main":
-                self.function_name_to_node[(func.get("name"), len(func.get('args')))] = (func,)
+            self.function_name_to_node[(func.get("name"), len(func.get('args')))] = (func,)
 
     def get_main_func_node(self, ast):
         main = [func for func in ast.get("functions") if func.get("name") == "main"]
