@@ -37,16 +37,16 @@ class Interpreter(InterpreterBase):
         super().error(ErrorType.NAME_ERROR, f"Variable/Function {var_name} has not been defined")    
 
     def dump_vars(self):
-        print("\n--------------------START:Variables--------------------")
+        print("--------------------START:Variables--------------------")
         for scope in (self.variable_name_to_value):
             print(scope)
         print("--------------------END:Variables--------------------")
         print("--------------------START:ReturnStack--------------------")
         print(self.return_flg)
         print("--------------------END:ReturnStack--------------------")
-        print("--------------------START:ReturnStack--------------------")
+        print("--------------------START:Functions--------------------")
         print(self.function_name_to_node)
-        print("--------------------END:ReturnStack--------------------\n")
+        print("--------------------END:Functions--------------------\n")
 
     def do_arithmetic(self, node):
         left = self.evaluate_expression(node.get("op1"))
@@ -72,7 +72,12 @@ class Interpreter(InterpreterBase):
         left = self.evaluate_expression(node.get("op1"))
         right = self.evaluate_expression(node.get("op2"))
 
-        if not type(left) in [bool, int] or not type(right) in [bool, int]:
+        if (type(left) in [int]): 
+            left = True if left != 0 else False
+        if (type(right) in [int]): 
+            right = True if right != 0 else False
+
+        if type(left) not in [bool] or type(right) not in [bool]:
             super().error(ErrorType.TYPE_ERROR, "Incompatible types for logical operation")
 
         if (node.elem_type == "||"):
@@ -94,10 +99,16 @@ class Interpreter(InterpreterBase):
     def do_comparison(self, node):
         left = self.evaluate_expression(node.get("op1"))
         right = self.evaluate_expression(node.get("op2"))
-        if (node.elem_type == "=="):
-            return (left == right)
-        elif (node.elem_type == "!="):
-            return (left != right)
+        if node.elem_type in ["==", "!="]:
+            if (type(left) in [int] and type(right) in [bool]): 
+                left = True if left != 0 else False
+            if (type(left) in [bool] and type(right) in [int]): 
+                right = True if right != 0 else False
+            
+            if (node.elem_type == "=="):
+                return (left == right)
+            elif (node.elem_type == "!="):
+                return (left != right)
         
         if not (type(left) in [int] and type(right) in [int]):
             super().error(ErrorType.TYPE_ERROR, f"Incompatible operator {node.elem_type} for types")
@@ -112,7 +123,6 @@ class Interpreter(InterpreterBase):
             return left >= right
 
     def evaluate_expression(self, node):
-        # print(node)
         if (node is None or node.elem_type == self.NIL_DEF):
             return None
         # If a value, return value
@@ -144,31 +154,47 @@ class Interpreter(InterpreterBase):
         
         return None
     
-    def do_assignment(self, stat):
+    def do_assignment(self, stat, ref_mapping):
         target_var_name = stat.get("name")
         source_node = stat.get("expression")
         resulting_value = self.evaluate_expression(source_node)
 
+        assigned = False
         for scope in reversed(self.variable_name_to_value):
             if target_var_name in scope:
                 scope[target_var_name] = resulting_value
-                return
-        
-        self.variable_name_to_value[-1][target_var_name] = resulting_value
+                assigned = True
+                break
+        if not assigned:
+            self.variable_name_to_value[-1][target_var_name] = resulting_value
 
-    def do_while(self, stat):
+        for formal_param, actual_param in ref_mapping:
+            if (formal_param.elem_type == self.REFARG_DEF and actual_param.elem_type == self.VAR_DEF):
+                ref_name = ""
+                if (actual_param.get('name') == target_var_name):
+                    ref_name = formal_param.get('name')
+                elif (formal_param.get('name') == target_var_name):
+                    ref_name = actual_param.get('name')
+                
+                for scope in reversed(self.variable_name_to_value):
+                    if ref_name in scope:
+                        scope[ref_name] = resulting_value
+
+    def do_while(self, stat, ref_mapping):
         self.variable_name_to_value.append({})
 
         while (True):
             cond = self.evaluate_expression(stat.get('condition'))
-            if (not type(cond) in [bool, int]):
+            if (type(cond) in [int]):
+                cond = True if cond != 0 else False
+            if (not type(cond) in [bool]):
                 super().error(ErrorType.TYPE_ERROR, f"Expected boolean/integer input in while, got {cond}")
 
             if (not cond):
                 break
     
             for statement in stat.get("statements") or []:
-                ret = self.run_statement(statement)
+                ret = self.run_statement(statement, ref_mapping)
         
                 if (self.return_flg[-1]):
                     self.variable_name_to_value.pop()
@@ -176,16 +202,18 @@ class Interpreter(InterpreterBase):
             
         self.variable_name_to_value.pop()
 
-    def do_conditional(self, stat):
+    def do_conditional(self, stat, ref_mapping):
         self.variable_name_to_value.append({})
         
         cond = self.evaluate_expression(stat.get('condition'))
-        if (not type(cond) in [bool, int]):
+        if (type(cond) in [int]):
+            cond = True if cond != 0 else False
+        if (not type(cond) in [bool]):
             super().error(ErrorType.TYPE_ERROR, f"Expected boolean/integer input in for, got {cond}")
 
         to_execute = "statements" if cond else "else_statements"
         for statement in stat.get(to_execute) or []:
-            ret = self.run_statement(statement)
+            ret = self.run_statement(statement, ref_mapping)
         
             if (self.return_flg[-1]):
                 self.variable_name_to_value.pop()
@@ -237,15 +265,15 @@ class Interpreter(InterpreterBase):
 
         return main[0]
 
-    def run_statement(self, stat):
+    def run_statement(self, stat, ref_mapping):
         if stat.elem_type == "=":
-            self.do_assignment(stat)
+            self.do_assignment(stat, ref_mapping)
         elif stat.elem_type == self.FCALL_DEF:
             self.do_func_call(stat)
         elif stat.elem_type == self.IF_DEF:
-            return self.do_conditional(stat)
+            return self.do_conditional(stat, ref_mapping)
         elif stat.elem_type == self.WHILE_DEF:
-            return self.do_while(stat)
+            return self.do_while(stat, ref_mapping)
         elif stat.elem_type == self.RETURN_DEF:
             self.return_flg[-1] = True
             return copy.deepcopy(self.evaluate_expression(stat.get("expression")))
@@ -254,11 +282,11 @@ class Interpreter(InterpreterBase):
         vars_before = copy.deepcopy(self.variable_name_to_value)
         self.variable_name_to_value += scope
 
-        ret = self.run_func(func, args)
+        ret = self.run_func(func, args, len(vars_before))
         
         # Updating lambda scope for future calls
         lambda_scope = self.variable_name_to_value[len(vars_before):]
-        self.variable_name_to_value = vars_before
+        self.variable_name_to_value = self.variable_name_to_value[:len(vars_before)]
 
         for scope in reversed(self.variable_name_to_value):
             if var_name in scope:
@@ -267,8 +295,9 @@ class Interpreter(InterpreterBase):
 
         return ret
 
-    def run_func(self, func, args):
+    def run_func(self, func, args, lambda_scope_index = -1):
         if self.trace_output:
+            print(f'\nCALLING {func.get("name")}: ')
             self.dump_vars()
         params = {}
 
@@ -277,31 +306,41 @@ class Interpreter(InterpreterBase):
             super().error(ErrorType.NAME_ERROR, f"Incorrect number of args for {func.get('name')}")
 
         # Loading args
-        for param, val in zip(func.get("args"), args):
+        arg_mapping = list(zip(func.get("args"), args))
+        for param, val in arg_mapping:
             params[param.get('name')] = self.evaluate_expression(val)
         self.variable_name_to_value.append(params)
 
         self.return_flg.append(False)
         ret = None
         for statement in func.get("statements"):
-            ret = self.run_statement(statement)
+            ret = self.run_statement(statement, arg_mapping)
         
             if (self.return_flg[-1]):
                 break
-        
+
         if self.trace_output:
+            print(f'After Function {func.get("name")}: ')
             self.dump_vars()
 
         # Handling ref params
         curr_formal_params = self.variable_name_to_value.pop()
-        for formal_param, actual_param in zip(func.get("args"), args):
+        for formal_param, actual_param in arg_mapping:
             if (formal_param.elem_type == self.REFARG_DEF and actual_param.elem_type == self.VAR_DEF):
                 target_var_name = actual_param.get("name")
                 for scope in reversed(self.variable_name_to_value):
                     if target_var_name in scope:
                         scope[target_var_name] = curr_formal_params[formal_param.get('name')]
-                        break
+                        
+                if (lambda_scope_index > 0):
+                    for scope in reversed(self.variable_name_to_value[:lambda_scope_index]):
+                        if target_var_name in scope:
+                            scope[target_var_name] = curr_formal_params[formal_param.get('name')]
+                            break
         
+        if self.trace_output:
+            print(f'Ending {func.get("name")}: ')
+            self.dump_vars()
         self.return_flg.pop()
 
         return ret        
