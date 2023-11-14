@@ -345,7 +345,16 @@ class Interpreter(InterpreterBase):
         # Loading args
         arg_mapping = list(zip(func.get("args"), args))
         for param, val in arg_mapping:
-            params[param.get('name')] = self.evaluate_expression(val, lambda_scope_index)
+            evaluated_val = self.evaluate_expression(val, lambda_scope_index)
+            if (param.elem_type == self.REFARG_DEF):
+                params[param.get('name')] = evaluated_val
+            else:
+                if (type(evaluated_val) in [tuple]):
+                    params[param.get('name')] = (copy.deepcopy(evaluated_val[0]), copy.deepcopy(evaluated_val[1]), "TEsting!") 
+                else:
+                    params[param.get('name')] = copy.deepcopy(evaluated_val) 
+
+        # print(params)
         self.variable_name_to_value.append(params)
 
         
