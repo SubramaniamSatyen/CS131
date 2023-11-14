@@ -8,10 +8,22 @@ class Interpreter(InterpreterBase):
         super().__init__(console_output, inp)   # call InterpreterBase's constructor
         self.variable_name_to_value = []
         self.function_name_to_node = {}
+        self.ref_mapping = []
         self.return_flg = []
         self.trace_output = trace_output
 
-    def get_variable_value(self, var_name, args = None):
+    def get_variable_value(self, var_name, args = None, lambda_scope_index = -1):
+        if (lambda_scope_index > 0):
+            for scope in reversed(self.variable_name_to_value[:lambda_scope_index]):
+                if var_name in scope:
+                    if (args is not None):
+                        if type(scope[var_name]) not in [tuple]:
+                            super().error(ErrorType.TYPE_ERROR, f"Invalid call to undefined function {var_name}")
+                        elif len(scope[var_name][0].get('args')) != args:
+                            super().error(ErrorType.TYPE_ERROR, f"Invalid number of args to function {var_name}")
+
+                    return scope[var_name]
+
         for scope in reversed(self.variable_name_to_value):
             if var_name in scope:
                 if (args is not None):
@@ -122,7 +134,7 @@ class Interpreter(InterpreterBase):
         elif (node.elem_type == ">="):
             return left >= right
 
-    def evaluate_expression(self, node):
+    def evaluate_expression(self, node, lambda_scope_index = -1):
         if (node is None or node.elem_type == self.NIL_DEF):
             return None
         # If a value, return value
@@ -131,7 +143,7 @@ class Interpreter(InterpreterBase):
         # If a variable, return the value of the variable
         elif (node.elem_type == self.VAR_DEF): 
             var_name = node.get("name")
-            val = self.get_variable_value(var_name)
+            val = self.get_variable_value(var_name, None, lambda_scope_index)
             return val
         # If lambda definition
         elif (node.elem_type == self.LAMBDA_DEF):
@@ -154,7 +166,7 @@ class Interpreter(InterpreterBase):
         
         return None
     
-    def do_assignment(self, stat, ref_mapping):
+    def do_assignment(self, stat, lambda_scope_index):
         target_var_name = stat.get("name")
         source_node = stat.get("expression")
         resulting_value = self.evaluate_expression(source_node)
@@ -168,19 +180,44 @@ class Interpreter(InterpreterBase):
         if not assigned:
             self.variable_name_to_value[-1][target_var_name] = resulting_value
 
-        for formal_param, actual_param in ref_mapping:
-            if (formal_param.elem_type == self.REFARG_DEF and actual_param.elem_type == self.VAR_DEF):
-                ref_name = ""
-                if (actual_param.get('name') == target_var_name):
-                    ref_name = formal_param.get('name')
-                elif (formal_param.get('name') == target_var_name):
-                    ref_name = actual_param.get('name')
-                
-                for scope in reversed(self.variable_name_to_value):
-                    if ref_name in scope:
-                        scope[ref_name] = resulting_value
+        # Determining any ref linked variables
+        refs_to_process = set()
+        adding_refs = [target_var_name]
+        for ref in adding_refs:
+            for mapping in reversed(self.ref_mapping):
+                if ref in mapping:
+                    linked_refs = mapping[ref]
+                    for linked_ref in linked_refs:
+                        if linked_ref not in refs_to_process:
+                            adding_refs.append(linked_ref)
+                        
+                        refs_to_process.add(linked_ref)
 
-    def do_while(self, stat, ref_mapping):
+        if target_var_name in refs_to_process:
+            refs_to_process.remove(target_var_name)
+
+        for param in refs_to_process:
+            if (lambda_scope_index > 0 and param in self.variable_name_to_value[-1]):
+                self.variable_name_to_value[-1][param] = resulting_value
+
+            for scope in reversed(self.variable_name_to_value[:lambda_scope_index] if lambda_scope_index > 0 else self.variable_name_to_value):
+                if param in scope:
+                    scope[param] = resulting_value
+
+        # for formal_param, actual_param in ref_mapping:
+        #     if (formal_param.elem_type == self.REFARG_DEF and actual_param.elem_type == self.VAR_DEF):
+        #         ref_name = ""
+        #         if (actual_param.get('name') == target_var_name):
+        #             ref_name = formal_param.get('name')
+        #         elif (formal_param.get('name') == target_var_name):
+        #             ref_name = actual_param.get('name')
+                
+        #         # ONLY reversed up to old scoping - if using a lambda!!!
+        #         for scope in reversed(self.variable_name_to_value[:lambda_scope_index] if lambda_scope_index > 0 else self.variable_name_to_value):
+        #             if ref_name in scope:
+        #                 scope[ref_name] = resulting_value
+
+    def do_while(self, stat, lambda_scope_index):
         self.variable_name_to_value.append({})
 
         while (True):
@@ -194,7 +231,7 @@ class Interpreter(InterpreterBase):
                 break
     
             for statement in stat.get("statements") or []:
-                ret = self.run_statement(statement, ref_mapping)
+                ret = self.run_statement(statement, lambda_scope_index)
         
                 if (self.return_flg[-1]):
                     self.variable_name_to_value.pop()
@@ -202,7 +239,7 @@ class Interpreter(InterpreterBase):
             
         self.variable_name_to_value.pop()
 
-    def do_conditional(self, stat, ref_mapping):
+    def do_conditional(self, stat, lambda_scope_index):
         self.variable_name_to_value.append({})
         
         cond = self.evaluate_expression(stat.get('condition'))
@@ -213,7 +250,7 @@ class Interpreter(InterpreterBase):
 
         to_execute = "statements" if cond else "else_statements"
         for statement in stat.get(to_execute) or []:
-            ret = self.run_statement(statement, ref_mapping)
+            ret = self.run_statement(statement, lambda_scope_index)
         
             if (self.return_flg[-1]):
                 self.variable_name_to_value.pop()
@@ -265,15 +302,15 @@ class Interpreter(InterpreterBase):
 
         return main[0]
 
-    def run_statement(self, stat, ref_mapping):
+    def run_statement(self, stat, lambda_scope_index):
         if stat.elem_type == "=":
-            self.do_assignment(stat, ref_mapping)
+            self.do_assignment(stat, lambda_scope_index)
         elif stat.elem_type == self.FCALL_DEF:
             self.do_func_call(stat)
         elif stat.elem_type == self.IF_DEF:
-            return self.do_conditional(stat, ref_mapping)
+            return self.do_conditional(stat, lambda_scope_index)
         elif stat.elem_type == self.WHILE_DEF:
-            return self.do_while(stat, ref_mapping)
+            return self.do_while(stat, lambda_scope_index)
         elif stat.elem_type == self.RETURN_DEF:
             self.return_flg[-1] = True
             return copy.deepcopy(self.evaluate_expression(stat.get("expression")))
@@ -308,13 +345,33 @@ class Interpreter(InterpreterBase):
         # Loading args
         arg_mapping = list(zip(func.get("args"), args))
         for param, val in arg_mapping:
-            params[param.get('name')] = self.evaluate_expression(val)
+            params[param.get('name')] = self.evaluate_expression(val, lambda_scope_index)
         self.variable_name_to_value.append(params)
+
+        
+        curr_ref_mapping = dict()
+        for formal_param, actual_param in arg_mapping:
+            if (formal_param.elem_type == self.REFARG_DEF and actual_param.elem_type == self.VAR_DEF):
+                actual_name = actual_param.get("name")  
+                formal_name = formal_param.get("name")
+
+                if actual_name in curr_ref_mapping:
+                    curr_ref_mapping[actual_name].append(formal_name)
+                else:
+                    curr_ref_mapping[actual_name] = [formal_name]
+
+                if formal_name in curr_ref_mapping:
+                    curr_ref_mapping[formal_name].append(actual_name)
+                else:
+                    curr_ref_mapping[formal_name] = [actual_name]
+
+        self.ref_mapping.append(curr_ref_mapping)
+
 
         self.return_flg.append(False)
         ret = None
         for statement in func.get("statements"):
-            ret = self.run_statement(statement, arg_mapping)
+            ret = self.run_statement(statement, lambda_scope_index)
         
             if (self.return_flg[-1]):
                 break
@@ -323,20 +380,21 @@ class Interpreter(InterpreterBase):
             print(f'After Function {func.get("name")}: ')
             self.dump_vars()
 
+        self.ref_mapping.pop()
         # Handling ref params
         curr_formal_params = self.variable_name_to_value.pop()
         for formal_param, actual_param in arg_mapping:
             if (formal_param.elem_type == self.REFARG_DEF and actual_param.elem_type == self.VAR_DEF):
-                target_var_name = actual_param.get("name")
-                for scope in reversed(self.variable_name_to_value):
+                target_var_name = actual_param.get("name")  
+                # for scope in reversed(self.variable_name_to_value):
+                #     if target_var_name in scope:
+                #         scope[target_var_name] = curr_formal_params[formal_param.get('name')]
+                        
+                for scope in reversed(self.variable_name_to_value[:lambda_scope_index] if lambda_scope_index > 0 else self.variable_name_to_value):
                     if target_var_name in scope:
                         scope[target_var_name] = curr_formal_params[formal_param.get('name')]
+                        break
                         
-                if (lambda_scope_index > 0):
-                    for scope in reversed(self.variable_name_to_value[:lambda_scope_index]):
-                        if target_var_name in scope:
-                            scope[target_var_name] = curr_formal_params[formal_param.get('name')]
-                            break
         
         if self.trace_output:
             print(f'Ending {func.get("name")}: ')
