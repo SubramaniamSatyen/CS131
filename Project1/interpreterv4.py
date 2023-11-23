@@ -11,6 +11,7 @@ class Interpreter(InterpreterBase):
         self.ref_mapping = []
         self.return_flg = []
         self.trace_output = trace_output
+        self.this = None
 
     def get_variable_value(self, var_name, args = None, lambda_scope_index = -1):
         if (lambda_scope_index > 0):
@@ -21,7 +22,6 @@ class Interpreter(InterpreterBase):
                             super().error(ErrorType.TYPE_ERROR, f"Invalid call to undefined function {var_name}")
                         elif len(scope[var_name][0].get('args')) != args:
                             super().error(ErrorType.TYPE_ERROR, f"Invalid number of args to function {var_name}")
-
                     return scope[var_name]
 
         for scope in reversed(self.variable_name_to_value):
@@ -31,7 +31,6 @@ class Interpreter(InterpreterBase):
                         super().error(ErrorType.TYPE_ERROR, f"Invalid call to undefined function {var_name}")
                     elif len(scope[var_name][0].get('args')) != args:
                         super().error(ErrorType.TYPE_ERROR, f"Invalid number of args to function {var_name}")
-
                 return scope[var_name]
             
         return self.get_function_value(var_name, args)
@@ -117,7 +116,7 @@ class Interpreter(InterpreterBase):
             if (type(left) in [bool] and type(right) in [int]): 
                 right = True if right != 0 else False
 
-            if (type(left) in [dict] and type(right) in [dict]):
+            if (type(left) in [list] and type(right) in [list]):
                 return left is right if node.elem_type == "==" else left is not right
 
             if (node.elem_type == "=="):
@@ -137,7 +136,7 @@ class Interpreter(InterpreterBase):
         elif (node.elem_type == ">="):
             return left >= right
 
-    def evaluate_expression(self, node, lambda_scope_index = -1):
+    def evaluate_expression(self, node, lambda_scope_index = -1, use_proto = False):
         if (node is None or node.elem_type == self.NIL_DEF):
             return None
         # If a value, return value
@@ -146,22 +145,46 @@ class Interpreter(InterpreterBase):
         # If a variable, return the value of the variable
         elif (node.elem_type == self.VAR_DEF): 
             var_name = self.get_name(node)
+            if var_name[0] == "this" and self.this is not None:
+                var_name[0] = self.this
             val = self.get_variable_value(var_name[0], None, lambda_scope_index)
 
             if (len(var_name) == 2):
-                if type(val) not in [dict]:
+                if type(val) not in [list]:
                     super().error(ErrorType.TYPE_ERROR, f"Invalid use of . operator with {'.'.join(var_name)}")
-                if var_name[1] not in val:
+                
+                if (var_name[1] == "proto" and use_proto):
+                    if (len(val) == 1):
+                        super().error(ErrorType.NAME_ERROR, f"Field {'.'.join(var_name)} not defined")
+                    return val[:-1]
+
+                found_member = False
+                for scope in reversed(val):
+                    if var_name[1] in scope:
+                        found_member = True
+                        val = scope[var_name[1]]
+                        break
+                
+                if not found_member:
                     super().error(ErrorType.NAME_ERROR, f"Function/Field {var_name[0]}.{var_name[1]} not found")
-                val = val[var_name[1]]
 
             return val
         # If object assignment
         elif (node.elem_type == self.OBJ_DEF):
-            return dict()
+            return [dict()]
         # If lambda definition
         elif (node.elem_type == self.LAMBDA_DEF):
-            return (node, copy.deepcopy(self.variable_name_to_value))
+            lambda_saved_scopes = []
+            for scope in self.variable_name_to_value:
+                curr_lambda_scope = {}
+                for key in scope.keys():
+                    if type(scope[key]) in [int, bool, str]:
+                        curr_lambda_scope[key] = copy.deepcopy(scope[key])
+                    # else:
+                    #     curr_lambda_scope[key] = scope[key]
+                lambda_saved_scopes.append(curr_lambda_scope)
+            
+            return (node, lambda_saved_scopes)
         # If function call
         elif (node.elem_type == self.FCALL_DEF):
             return self.do_func_call(node)
@@ -186,12 +209,44 @@ class Interpreter(InterpreterBase):
     def get_name(self, node):
         return node.get("name").split(".")
 
-    def do_assignment(self, stat, lambda_scope_index = -1, this = None):
+    def handle_proto(self, stat, lambda_scope_index = -1):
+        new_object_var_stack = []
         names = self.get_name(stat)
-        if names[0] == "this" and this is not None:
-            names[0] = this
+
+        source_node = stat.get("expression")
+        resulting_value = self.evaluate_expression(source_node, -1, True)
+
+        # Handle setting to nil
+        if (resulting_value is None):
+            for scope in reversed(self.variable_name_to_value):
+                if names[0] in scope:
+                    scope[names[0]] = [scope[names[0]][-1]]
+                    return
+    
+        if type(resulting_value) not in [list]:
+            super().error(ErrorType.TYPE_ERROR, f"Invalid assignment to proto with {resulting_value}")
+
+        for proto_var_dict in resulting_value:
+            new_object_var_stack.append(proto_var_dict)
+        
+        for scope in reversed(self.variable_name_to_value):
+            if names[0] in scope:
+                new_object_var_stack.append(scope[names[0]][-1])
+                scope[names[0]] = new_object_var_stack
+                break
+
+    def do_assignment(self, stat, lambda_scope_index = -1):
+        names = self.get_name(stat)
+        if names[0] == "this" and self.this is not None:
+            names[0] = self.this
         target_var_name = names[0]
-        member_name = None if len(names) < 2 else names[1]
+
+        member_name = None
+        if (len(names) >= 2):
+            member_name = names[1]
+            if member_name == "proto":
+                self.handle_proto(stat, lambda_scope_index)
+                return
 
         source_node = stat.get("expression")
         resulting_value = self.evaluate_expression(source_node)
@@ -200,12 +255,14 @@ class Interpreter(InterpreterBase):
         assigned = False
         for scope in reversed(self.variable_name_to_value):
             if target_var_name in scope:
+                # Add variable to end of object prototyping
                 if member_name is not None:
-                    scope[target_var_name][member_name] = resulting_value
+                    scope[target_var_name][-1][member_name] = resulting_value
                 else:
                     scope[target_var_name] = resulting_value
                 assigned = True
                 break
+
         if not assigned and member_name is not None:
             super().error(ErrorType.NAME_ERROR, f"Field {target_var_name}.{member_name} not found")
         elif not assigned:
@@ -240,7 +297,7 @@ class Interpreter(InterpreterBase):
         if member_name is not None and lambda_scope_index > 0:
             for scope in reversed(self.variable_name_to_value[:lambda_scope_index]):
                 if target_var_name in scope:
-                    scope[target_var_name][member_name] = resulting_value
+                    scope[target_var_name][-1][member_name] = resulting_value
 
     def do_while(self, stat, lambda_scope_index):
         self.variable_name_to_value.append({})
@@ -296,13 +353,26 @@ class Interpreter(InterpreterBase):
         return None
     
     def do_member_call(self, stat):
-        obj = self.get_variable_value(stat.get('objref'))
-        if type(obj) not in [dict]:
-            super().error(ErrorType.TYPE_ERROR, f"Invalid use of . operator with {stat.get('objref')}.{stat.get('name')}")
-        elif stat.get("name") not in obj:
-            super().error(ErrorType.NAME_ERROR, f"Function {stat.get('objref')}.{stat.get('name')}(...) not found")
+        obj_name = stat.get('objref')
+        if obj_name == "this" and self.this is not None:
+            obj_name = self.this
+        obj = self.get_variable_value(obj_name)
 
-        possible_func_info = obj[stat.get('name')]
+        if type(obj) not in [list]:
+            super().error(ErrorType.TYPE_ERROR, f"Invalid use of . operator with {stat.get('objref')}.{stat.get('name')}")
+        
+        found_member = False
+        for scope in reversed(obj):
+            if stat.get("name") in scope:
+                found_member = True
+                possible_func_info = scope[stat.get('name')]
+                break
+        
+        if not found_member:
+            super().error(ErrorType.NAME_ERROR, f"Function {stat.get('objref')}.{stat.get('name')}(...) not found")
+        if type(possible_func_info) not in [tuple]:
+            super().error(ErrorType.TYPE_ERROR, f"Invalid call to member variable {stat.get('objref')}.{stat.get('name')}")
+
         possible_func = possible_func_info[0]
 
         if possible_func.elem_type == self.FUNC_DEF:
@@ -310,11 +380,16 @@ class Interpreter(InterpreterBase):
             func = possible_func
 
             args = stat.get('args')
-            ret = self.run_func(self.function_name_to_node[(func.get("name"), len(func.get("args")))][0], stat.get('args'), -1, stat.get('objref'))
+            update_this = True if self.this is None else False
+            if update_this:
+                temp = self.this
+                self.this = stat.get('objref')
+            ret = self.run_func(self.function_name_to_node[(func.get("name"), len(func.get("args")))][0], stat.get('args'))
+            if update_this:
+                self.this = temp
 
         elif possible_func.elem_type == self.LAMBDA_DEF:
             # Lambda member
-            # TODO: Maybe? - "Evaluate" func in case it's a variable name for a different lambda?
             func = possible_func_info[0]
             scope = possible_func_info[1]
 
@@ -324,12 +399,18 @@ class Interpreter(InterpreterBase):
             vars_before = copy.deepcopy(self.variable_name_to_value)
             self.variable_name_to_value += scope
 
-            ret = self.run_func(func, args, len(vars_before), stat.get('objref'))
-            
+            update_this = True if self.this is None else False
+            if update_this:
+                temp = self.this
+                self.this = stat.get('objref')
+            ret = self.run_func(func, args, len(vars_before))
+            if update_this:
+                self.this = temp
+
             # Updating lambda scope for future calls
             lambda_scope = self.variable_name_to_value[len(vars_before):]
             self.variable_name_to_value = self.variable_name_to_value[:len(vars_before)]
-            obj[stat.get('name')] = (func, lambda_scope)
+            obj[-1][stat.get('name')] = (func, lambda_scope)
 
         return ret
 
@@ -365,9 +446,9 @@ class Interpreter(InterpreterBase):
 
         return main[0]
 
-    def run_statement(self, stat, lambda_scope_index = -1, this = None):
+    def run_statement(self, stat, lambda_scope_index = -1):
         if stat.elem_type == "=":
-            self.do_assignment(stat, lambda_scope_index, this)
+            self.do_assignment(stat, lambda_scope_index)
         elif stat.elem_type == self.FCALL_DEF:
             self.do_func_call(stat)
         elif stat.elem_type == self.MCALL_DEF:
@@ -397,7 +478,7 @@ class Interpreter(InterpreterBase):
 
         return ret
 
-    def run_func(self, func, args, lambda_scope_index = -1, this = None):
+    def run_func(self, func, args, lambda_scope_index = -1):
         if self.trace_output:
             print(f'\nCALLING {func.get("name")}: ')
             self.dump_vars()
@@ -415,11 +496,10 @@ class Interpreter(InterpreterBase):
                 params[param.get('name')] = evaluated_val
             else:
                 if (type(evaluated_val) in [tuple]):
-                    params[param.get('name')] = (copy.deepcopy(evaluated_val[0]), copy.deepcopy(evaluated_val[1]), "TEsting!") 
+                    params[param.get('name')] = (copy.deepcopy(evaluated_val[0]), copy.deepcopy(evaluated_val[1])) 
                 else:
                     params[param.get('name')] = copy.deepcopy(evaluated_val) 
 
-        # print(params)
         self.variable_name_to_value.append(params)
 
         
@@ -445,7 +525,7 @@ class Interpreter(InterpreterBase):
         self.return_flg.append(False)
         ret = None
         for statement in func.get("statements"):
-            ret = self.run_statement(statement, lambda_scope_index, this)
+            ret = self.run_statement(statement, lambda_scope_index)
         
             if (self.return_flg[-1]):
                 break
