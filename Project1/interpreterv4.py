@@ -69,7 +69,7 @@ class Interpreter(InterpreterBase):
                 super().error(ErrorType.TYPE_ERROR, "Incompatible types for arithmetic operation")
             return left + right
         else:
-            if not (type(left) in [int, bool] and type(right) in [int, bool ]):
+            if not (type(left) in [int, bool] and type(right) in [int, bool]):
                 super().error(ErrorType.TYPE_ERROR, "Incompatible types for arithmetic operation")
 
             if (node.elem_type == "-"):
@@ -154,16 +154,24 @@ class Interpreter(InterpreterBase):
                     super().error(ErrorType.TYPE_ERROR, f"Invalid use of . operator with {'.'.join(var_name)}")
                 
                 if (var_name[1] == "proto" and use_proto):
-                    if (len(val) == 1):
+                    if (val[0] is None):
                         super().error(ErrorType.NAME_ERROR, f"Field {'.'.join(var_name)} not defined")
-                    return val[:-1]
+                    return val[0]
 
                 found_member = False
-                for scope in reversed(val):
-                    if var_name[1] in scope:
+                searching = True
+                curr_scope = val
+                while searching:
+                    if var_name[1] in curr_scope[1]:
                         found_member = True
-                        val = scope[var_name[1]]
+                        searching = False
+
+                        val = curr_scope[1][var_name[1]]
                         break
+                    elif curr_scope[0] is not None:
+                        curr_scope = curr_scope[0]
+                    else:
+                        searching = False
                 
                 if not found_member:
                     super().error(ErrorType.NAME_ERROR, f"Function/Field {var_name[0]}.{var_name[1]} not found")
@@ -171,7 +179,7 @@ class Interpreter(InterpreterBase):
             return val
         # If object assignment
         elif (node.elem_type == self.OBJ_DEF):
-            return [dict()]
+            return [None, dict()]
         # If lambda definition
         elif (node.elem_type == self.LAMBDA_DEF):
             lambda_saved_scopes = []
@@ -180,8 +188,7 @@ class Interpreter(InterpreterBase):
                 for key in scope.keys():
                     if type(scope[key]) in [int, bool, str]:
                         curr_lambda_scope[key] = copy.deepcopy(scope[key])
-                    # else:
-                    #     curr_lambda_scope[key] = scope[key]
+
                 lambda_saved_scopes.append(curr_lambda_scope)
             
             return (node, lambda_saved_scopes)
@@ -209,8 +216,7 @@ class Interpreter(InterpreterBase):
     def get_name(self, node):
         return node.get("name").split(".")
 
-    def handle_proto(self, stat, lambda_scope_index = -1):
-        new_object_var_stack = []
+    def handle_proto(self, stat):
         names = self.get_name(stat)
 
         source_node = stat.get("expression")
@@ -220,20 +226,15 @@ class Interpreter(InterpreterBase):
         if (resulting_value is None):
             for scope in reversed(self.variable_name_to_value):
                 if names[0] in scope:
-                    scope[names[0]] = [scope[names[0]][-1]]
+                    scope[names[0]][0] = None
                     return
     
         if type(resulting_value) not in [list]:
             super().error(ErrorType.TYPE_ERROR, f"Invalid assignment to proto with {resulting_value}")
 
-        for proto_var_dict in resulting_value:
-            new_object_var_stack.append(proto_var_dict)
-        
         for scope in reversed(self.variable_name_to_value):
             if names[0] in scope:
-                new_object_var_stack.append(scope[names[0]][-1])
-                scope[names[0]] = new_object_var_stack
-                break
+                scope[names[0]][0] = resulting_value
 
     def do_assignment(self, stat, lambda_scope_index = -1):
         names = self.get_name(stat)
@@ -245,7 +246,7 @@ class Interpreter(InterpreterBase):
         if (len(names) >= 2):
             member_name = names[1]
             if member_name == "proto":
-                self.handle_proto(stat, lambda_scope_index)
+                self.handle_proto(stat)
                 return
 
         source_node = stat.get("expression")
@@ -362,11 +363,19 @@ class Interpreter(InterpreterBase):
             super().error(ErrorType.TYPE_ERROR, f"Invalid use of . operator with {stat.get('objref')}.{stat.get('name')}")
         
         found_member = False
-        for scope in reversed(obj):
-            if stat.get("name") in scope:
+        searching = True
+        curr_scope = obj
+        while searching:
+            if stat.get("name") in curr_scope[1]:
                 found_member = True
-                possible_func_info = scope[stat.get('name')]
+                searching = False
+
+                possible_func_info = curr_scope[1][stat.get('name')]
                 break
+            elif curr_scope[0] is not None:
+                curr_scope = curr_scope[0]
+            else:
+                searching = False
         
         if not found_member:
             super().error(ErrorType.NAME_ERROR, f"Function {stat.get('objref')}.{stat.get('name')}(...) not found")
@@ -380,10 +389,11 @@ class Interpreter(InterpreterBase):
             func = possible_func
 
             args = stat.get('args')
-            update_this = True if self.this is None else False
+            curr_obj = stat.get('objref')
+            update_this = (curr_obj != 'this')
             if update_this:
                 temp = self.this
-                self.this = stat.get('objref')
+                self.this = curr_obj
             ret = self.run_func(self.function_name_to_node[(func.get("name"), len(func.get("args")))][0], stat.get('args'))
             if update_this:
                 self.this = temp
@@ -399,10 +409,11 @@ class Interpreter(InterpreterBase):
             vars_before = copy.deepcopy(self.variable_name_to_value)
             self.variable_name_to_value += scope
 
-            update_this = True if self.this is None else False
+            curr_obj = stat.get('objref')
+            update_this = (curr_obj != 'this')
             if update_this:
                 temp = self.this
-                self.this = stat.get('objref')
+                self.this = curr_obj
             ret = self.run_func(func, args, len(vars_before))
             if update_this:
                 self.this = temp
